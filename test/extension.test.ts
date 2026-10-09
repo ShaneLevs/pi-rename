@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import renameExtension from "../extensions/index.ts";
@@ -49,11 +49,13 @@ function createHarness(options: HarnessOptions = {}) {
 
 	const ctx: any = {
 		mode: options.mode ?? "rpc",
-		hasUI: true,
+		hasUI: (options.mode ?? "rpc") !== "print",
 		cwd: "/repo/HTML",
 		ui: {
 			setTitle: (title: string) => titles.push(title),
 			notify: (message: string, level = "info") => notices.push({ message, level }),
+			// Overridden per test: `select` backs the /rename model picker.
+			select: async () => undefined,
 		},
 		sessionManager: {
 			getCwd: () => "/repo/HTML",
@@ -103,6 +105,7 @@ function createHarness(options: HarnessOptions = {}) {
 
 	return {
 		ctx,
+		ui: ctx.ui,
 		titles,
 		notices,
 		appended,
@@ -326,13 +329,59 @@ describe("/rename model", () => {
 		expect(h.calls.length).toBe(1);
 	});
 
-	test("reports the effective model with no argument", async () => {
+ test("reports the effective model with no argument", async () => {
 		const h = createHarness({ entries: firstExchange() });
-		await h.run("model");
-		expect(h.notices.at(-1)?.message).toContain("(session) test/test-model");
 		await h.run("model other/other-model");
-		await h.run("model");
+		await h.run("model show");
 		expect(h.notices.at(-1)?.message).toContain("(configured) other/other-model");
+	});
+
+	test("no argument opens the picker and stores the chosen model", async () => {
+		const h = createHarness({ entries: firstExchange() });
+		h.ui.select = async (_title: string, options: string[]) => options[1]; // first non-session entry
+		await h.run("model");
+		expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).model).toBe("other/other-model");
+		expect(h.notices.at(-1)?.message).toContain("naming model → other/other-model");
+	});
+
+	test("choosing the session entry clears the override", async () => {
+		const h = createHarness({ entries: firstExchange() });
+		await h.run("model other/other-model");
+		h.ui.select = async (_title: string, options: string[]) => options[0];
+		await h.run("model");
+		expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).model).toBe("");
+	});
+
+	test("cancelling the picker changes nothing", async () => {
+		const h = createHarness({ entries: firstExchange() });
+		h.ui.select = async () => undefined;
+		await h.run("model");
+		expect(existsSync(join(dir, "config.json"))).toBe(false);
+	});
+
+	test("without UI, /rename model lists instead of picking", async () => {
+		const h = createHarness({ entries: firstExchange(), mode: "print" });
+		await h.run("model");
+		const message = String(h.notices.at(-1)?.message ?? "");
+		expect(message).toContain("available:");
+		expect(existsSync(join(dir, "config.json"))).toBe(false);
+	});
+
+	test("reasoning: no argument prints the level, unknown level is rejected, valid level is stored", async () => {
+		const h = createHarness({ entries: firstExchange() });
+		await h.run("reasoning");
+		expect(h.notices.at(-1)?.message).toContain("low");
+		await h.run("reasoning nonsense");
+		expect(h.notices.at(-1)?.level).toBe("warning");
+		await h.run("reasoning medium");
+		expect(JSON.parse(readFileSync(join(dir, "config.json"), "utf8")).reasoning).toBe("medium");
+	});
+
+	test("reasoning is forwarded to the naming call", async () => {
+		const h = createHarness({ entries: firstExchange() });
+		await h.run("reasoning minimal");
+		await h.run("");
+		expect(h.calls[0]?.options.reasoning).toBe("minimal");
 	});
 
 	test("default clears the override", async () => {

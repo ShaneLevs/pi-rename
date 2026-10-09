@@ -8,7 +8,11 @@ pi coding agent 扩展：**根据对话内容给会话重命名，并把名字�
 
 - 新会话第一轮对话结束后，自动起一个名字（已有名字的会话不会被覆盖）。
 - `/rename` —— 按最近 5 轮对话重新命名，**有名字就覆盖**。
-- `/rename model <provider/id>` —— 指定用来起名字的模型。
+- `/rename model` —— **打开选择器直接选**，从可用模型里挑；`session model` 那一项 = 回到会话模型。
+- `/rename model <provider/id>` —— 指定用来起名字的模型（支持 id 子串模糊匹配）。
+- `/rename model show` —— 打印当前实际生效的模型，不改配置。
+- `/rename model list` —— 打印可用模型列表，不弹选择器（print/json 模式下不带参数也是这个）。
+- `/rename reasoning <off|minimal|low|medium|high>` —— 起名调用的思考等级，默认 `low`；不带参数打印当前值。
 - `/rename on` / `/rename off` —— 开启 / 关闭自动重命名。
 
 ---
@@ -36,14 +40,18 @@ pi install npm:pi-rename
 | `/rename` | 取最近 5 轮对话让模型起名字，覆盖当前名字 |
 | `/rename <文本>` | 直接用这段文本当名字（覆盖） |
 | `/rename on` / `/rename off` | 开/关「第一轮结束后自动重命名」，写进配置文件 |
+| `/rename model` | 不带参数：打开选择器，从可用模型里选 |
 | `/rename model <provider/id>` | 设置起名字用的模型（支持 id 子串模糊匹配） |
 | `/rename model default` | 取消设置，回到「用当前会话模型」 |
-| `/rename model` | 不带参数：打印当前实际生效的模型 |
+| `/rename model show` | 打印当前实际生效的模型 |
+| `/rename model list` | 打印可用模型列表，不弹选择器 |
+| `/rename reasoning <level>` | 起名的思考等级（off / minimal / low / medium / high） |
+| `/rename reasoning` | 不带参数：打印当前等级 |
 
-配置在 `~/.pi/agent/pi-rename/config.json`（用 `PI_RENAME_CONFIG_DIR` 可换目录），只有两个字段：
+配置在 `~/.pi/agent/pi-rename/config.json`（用 `PI_RENAME_CONFIG_DIR` 可换目录），只有三个字段：
 
 ```json
-{ "auto": true, "model": "" }
+{ "auto": true, "model": "", "reasoning": "low" }
 ```
 
 ## 命名规则
@@ -135,7 +143,11 @@ pi coding agent extension: **names your sessions from the conversation, and mirr
 
 - A new session gets named automatically after its first turn (sessions that already have a name are never overwritten).
 - `/rename` — re-name from the last 5 turns, **overwriting the current name**.
-- `/rename model <provider/id>` — pick the model used for naming.
+- `/rename model` — **opens a picker over the available models**; the `session model` entry falls back to the session's own model.
+- `/rename model <provider/id>` — pick the model used for naming (substring / fuzzy id match).
+- `/rename model show` — print the model that is actually in effect, without changing anything.
+- `/rename model list` — print the available models instead of opening a picker (also the no-argument behaviour in print/json mode).
+- `/rename reasoning <off|minimal|low|medium|high>` — thinking level for the naming call, default `low`; no argument prints the current level.
 - `/rename on` / `/rename off` — enable / disable auto-renaming.
 
 ### Install
@@ -159,14 +171,18 @@ Run `/reload` in pi afterwards (auto-discovered on first install). To try it onc
 | `/rename` | Name the session from the last 5 turns, overwriting the current name |
 | `/rename <text>` | Use this text as the name, verbatim (overwrite) |
 | `/rename on` / `/rename off` | Turn auto-renaming after the first turn on / off (persisted) |
+| `/rename model` | No argument: open a picker over the available models |
 | `/rename model <provider/id>` | Set the naming model (substring / fuzzy id match) |
 | `/rename model default` | Clear the override, fall back to the current session model |
-| `/rename model` | No argument: print the model that is actually in effect |
+| `/rename model show` | Print the model that is actually in effect |
+| `/rename model list` | Print the available models, no picker |
+| `/rename reasoning <level>` | Thinking level for naming (off / minimal / low / medium / high) |
+| `/rename reasoning` | No argument: print the current level |
 
-Config lives in `~/.pi/agent/pi-rename/config.json` (override the directory with `PI_RENAME_CONFIG_DIR`), two fields only:
+Config lives in `~/.pi/agent/pi-rename/config.json` (override the directory with `PI_RENAME_CONFIG_DIR`), three fields:
 
 ```json
-{ "auto": true, "model": "" }
+{ "auto": true, "model": "", "reasoning": "low" }
 ```
 
 ### How the name is produced

@@ -30,6 +30,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	buildNameRequest,
 	collectTurns,
@@ -49,17 +50,20 @@ const ENTRY_TYPE = "pi-rename";
  * against this cap too, so 64 was too tight and left no text at all.
  */
 const NAME_MAX_TOKENS = 512;
+const NAME_REASONING = "low";
+
+/** Levels accepted by config.json `reasoning` and `/rename reasoning`. */
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
+type NameThinkingLevel = (typeof THINKING_LEVELS)[number];
 
 /**
- * Thinking level for the naming call. We ask for `low` instead of leaving
- * `reasoning` undefined: an undefined level makes pi's adapters explicitly
- * disable thinking (the Anthropic adapter sends `thinkingEnabled: false`), and
- * reasoning-only models reject that outright. `low` also degrades safely — models
- * without reasoning support clamp it back to `off`, and non-reasoning relays just
- * see `reasoning_effort: "low"`. Budget-based adapters add the level's thinking
- * budget on top of `NAME_MAX_TOKENS` and still keep 1024 tokens for the answer.
+ * `off` is a valid stored level (it means "try to disable thinking" for models
+ * that support it) but streamSimple's option type only accepts real thinking
+ * levels — undefined is what the adapters turn into thinkingEnabled: false.
  */
-const NAME_REASONING = "low";
+function toStreamReasoning(level: NameThinkingLevel): ThinkingLevel | undefined {
+	return level === "off" ? undefined : level;
+}
 
 /** Config directory. Override with PI_RENAME_CONFIG_DIR (the tests use a temp dir). */
 function configDir(): string {
@@ -75,9 +79,11 @@ interface RenameConfig {
 	auto: boolean;
 	/** Naming model ("provider/id" or an id substring). Empty = session model. */
 	model: string;
+	/** Thinking level for the naming call. */
+	reasoning: NameThinkingLevel;
 }
 
-const DEFAULTS: RenameConfig = { auto: true, model: "" };
+const DEFAULTS: RenameConfig = { auto: true, model: "", reasoning: NAME_REASONING };
 
 function readBoolean(value: unknown, fallback: boolean): boolean {
 	if (typeof value === "boolean") return value;
@@ -100,6 +106,10 @@ function loadConfig(): RenameConfig {
 		// `autoName` was the original key; keep reading it so an old file survives.
 		auto: readBoolean(stored.auto ?? stored.autoName, DEFAULTS.auto),
 		model: typeof stored.model === "string" ? stored.model : DEFAULTS.model,
+		// Unknown levels fall back to the default instead of failing the request.
+		reasoning: THINKING_LEVELS.includes(stored.reasoning as NameThinkingLevel)
+			? (stored.reasoning as NameThinkingLevel)
+			: DEFAULTS.reasoning,
 	};
 }
 
@@ -162,7 +172,7 @@ export default function (pi: ExtensionAPI) {
 				.streamSimple(
 					model,
 					{ systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-					{ maxTokens: NAME_MAX_TOKENS, temperature: 0.2, cacheRetention: "none", reasoning: NAME_REASONING },
+					{ maxTokens: NAME_MAX_TOKENS, temperature: 0.2, cacheRetention: "none", reasoning: toStreamReasoning(config.reasoning) },
 				)
 				.result();
 			if (response.stopReason === "error") throw new Error(response.errorMessage ?? "model error");
@@ -225,7 +235,8 @@ export default function (pi: ExtensionAPI) {
 	// ---------------------------------------------------------------- command
 
 	pi.registerCommand("rename", {
-		description: "Rename this session from the conversation (/rename [name|on|off|model <provider/id>])",
+		description:
+			"Rename this session from the conversation (/rename [name|on|off|model|reasoning <args>])",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
 			const [sub, ...rest] = trimmed.split(/\s+/);
@@ -245,10 +256,12 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// /rename model [provider/id|default] — which model does the naming.
+			// /rename model — which model does the naming.
 			if (keyword === "model") {
 				const pattern = rest.join(" ").trim();
-				if (!pattern) {
+
+				// `show` prints the effective model without changing anything.
+				if (pattern === "show") {
 					const model = pickModel(ctx);
 					ctx.ui.notify(
 						model
@@ -258,12 +271,75 @@ export default function (pi: ExtensionAPI) {
 					);
 					return;
 				}
+
+				// No argument → interactive picker instead of asking the user to type
+				// provider/id from memory. `show` / `list` prints instead; print/json
+				// mode (no dialog UI) also degrades to a printed list.
+				if (!pattern || pattern === "select" || pattern === "list") {
+					const available = ctx.modelRegistry.getAvailable();
+					if (available.length === 0) {
+						ctx.ui.notify("pi-rename: no models available", "warning");
+						return;
+					}
+					const sessionEntry = `session model${ctx.model ? ` (${ctx.model.provider}/${ctx.model.id})` : ""}`;
+					// Group by provider so the list reads like pi's own model switcher.
+					const sorted = [
+						sessionEntry,
+						...available
+							.map((m) => `${m.provider}/${m.id}`)
+							.sort((a, b) => a.localeCompare(b)),
+					];
+					const current = pickModel(ctx);
+					const header = `pi-rename: naming model${current ? ` (now ${current.provider}/${current.id})` : ""}`;
+					const printList = () => {
+						ctx.ui.notify(`${header}; available: ${sorted.slice(1).join(", ")}`, "info");
+					};
+
+					if (!ctx.hasUI || pattern === "list") {
+						printList();
+						return;
+					}
+					const chosen = await ctx.ui.select(header, sorted);
+					if (chosen === undefined) return; // picker cancelled
+					if (chosen === sessionEntry) {
+						config.model = "";
+						saveConfig(config);
+						ctx.ui.notify("pi-rename: naming model → session model", "info");
+						return;
+					}
+					config.model = chosen;
+					saveConfig(config);
+					ctx.ui.notify(`pi-rename: naming model → ${chosen}`, "info");
+					return;
+				}
+
+				// Explicit pattern: keep the typed path for scripts and muscle memory.
 				config.model = pattern === "default" || pattern === "clear" ? "" : pattern;
 				saveConfig(config);
 				ctx.ui.notify(
 					config.model ? `pi-rename: naming model → ${config.model}` : "pi-rename: naming model → session model",
 					"info",
 				);
+				return;
+			}
+
+			// /rename reasoning [level] — thinking level for the naming call.
+			if (keyword === "reasoning" || keyword === "thinking") {
+				const level = rest.join(" ").trim().toLowerCase();
+				if (!level) {
+					ctx.ui.notify(
+						`pi-rename: reasoning is “${config.reasoning}” (off | minimal | low | medium | high)`,
+						"info",
+					);
+					return;
+				}
+				if (!THINKING_LEVELS.includes(level as NameThinkingLevel)) {
+					ctx.ui.notify(`pi-rename: unknown reasoning “${level}” (off | minimal | low | medium | high)`, "warning");
+					return;
+				}
+				config.reasoning = level as NameThinkingLevel;
+				saveConfig(config);
+				ctx.ui.notify(`pi-rename: reasoning → ${config.reasoning}`, "info");
 				return;
 			}
 
