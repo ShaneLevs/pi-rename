@@ -100,16 +100,21 @@ user:    "Name this conversation (5 turns) in <语言>, within 15 units:\n\nUSER
 
 ### VS Code（pwsh / Git Bash）
 
-两种 shell 在 VS Code 集成终端里都正常响应 OSC 标题序列。如果发现**窗口标题变了但标签栏没跟着变**，把标签标题模板改成读 shell 上报的标题：
+pi 发的标题序列本身不分平台：`ctx.ui.setTitle()` 在 Windows 上同样向 stdout 写 `OSC 0`（pi-tui 的 `terminal.setTitle` 没有 win32 分支），ConPTY 会把它转交给 VS Code。所以**窗口标题变了但标签栏没跟着变**时，是 VS Code 标签标题模板没读 shell 上报的标题，改成：
 
 ```json
 { "terminal.integrated.tabs.title": "${sequence}" }
 ```
 
-注意：
+这个设置在 Windows 上尤其必要：Windows 终端的默认标签模板**不会**跟随 OSC 序列刷新标签（macOS/Linux 上多数默认模板会）。改完重开一个终端标签生效。
 
-- 用 VS Code 的 **Terminal: Rename** 手动改过标签名会覆盖 shell 上报的标题，需要先 **Terminal: Clear Rename** 或开新终端。
-- pi 退出后 pwsh / Git Bash 会在下一次画提示符时把标题写回去，这是 shell 行为，不是扩展失效。
+再核对三层排查顺序：
+
+1. **窗口标题变了，标签没变** → 上面的 `${sequence}` 模板，改完一定生效。
+2. **窗口标题也没变** → pi 这边确实发出了序列，但被别的东西盖掉了。两个已知来源：
+   - VS Code 的 **Terminal: Rename** 手动改过标签名会永久压住 shell 上报的标题，需要 **Terminal: Clear Rename** 或开新终端；
+   - pi 启动时的扩展检查（npm 进程）在 Windows 上会重写控制台标题，pi 自己会在检查结束后恢复标题 —— 但如果你在恢复之前重命名过，标题会被恢复动作盖回 `π - <name> - <cwd>`。重跑一次 `/rename` 即可。
+3. **pi 退出后标题被打回原形** → pwsh / Git Bash 在下一次画提示符时把标题写回去，这是 shell 行为，不是扩展失效。
 
 ## 行为细节
 
@@ -131,7 +136,7 @@ pi-rename/
 ```
 
 ```bash
-npm run check    # tsc + tsc(test) + bun test（52 个用例）
+npm run check    # tsc + tsc(test) + bun test（58 个用例）
 pi -e ./extensions/index.ts
 ```
 
@@ -222,16 +227,21 @@ After naming, `ctx.ui.setTitle(name)` is called: TUI mode emits the OSC title se
 
 #### VS Code (pwsh / Git Bash)
 
-Both shells honour OSC title sequences in the integrated terminal. If the **window title changes but the tab label doesn't**, point the tab title template at the shell-reported title:
+The title sequence itself is platform-independent: `ctx.ui.setTitle()` writes `OSC 0` to stdout on Windows too (pi-tui's `terminal.setTitle` has no win32 branch), and ConPTY forwards it to VS Code. So when the **window title changes but the tab label doesn't**, the tab title template is not reading the shell-reported title. Point it at the sequence:
 
 ```json
 { "terminal.integrated.tabs.title": "${sequence}" }
 ```
 
-Caveats:
+This setting matters most on Windows: the default tab template on Windows terminals does **not** follow OSC sequences (on macOS/Linux most default templates do). Reopen a terminal tab after changing it.
 
-- A manual **Terminal: Rename** in VS Code overrides the shell-reported title; use **Terminal: Clear Rename** or a fresh terminal.
-- After pi exits, pwsh / Git Bash writes their own title back on the next prompt. That's shell behaviour, not a broken extension.
+Then triage in this order:
+
+1. **Window title changed, tab label didn't** → the `${sequence}` template above; it will work after the change.
+2. **Window title didn't change either** → pi did emit the sequence but something overwrote it. Two known sources:
+   - A manual **Terminal: Rename** in VS Code permanently overrides the shell-reported title; use **Terminal: Clear Rename** or a fresh terminal.
+   - pi's startup extension check (an npm subprocess) rewrites the console title on Windows; pi restores the title afterwards — but if you renamed before the restore ran, your title gets replaced by `π - <name> - <cwd>`. Run `/rename` once more.
+3. **The title reverts after pi exits** → pwsh / Git Bash write their own title back on the next prompt. That's shell behaviour, not a broken extension.
 
 ### Behaviour details
 
@@ -243,7 +253,7 @@ Caveats:
 ### Development
 
 ```bash
-npm run check    # tsc + tsc(test) + bun test (52 cases)
+npm run check    # tsc + tsc(test) + bun test (58 cases)
 pi -e ./extensions/index.ts
 ```
 
