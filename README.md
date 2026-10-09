@@ -1,5 +1,9 @@
 # pi-rename
 
+[![npm version](https://img.shields.io/npm/v/pi-rename.svg)](https://www.npmjs.com/package/pi-rename)
+[![pi package](https://img.shields.io/badge/pi-package-8A2BE2.svg)](https://pi.dev/packages/pi-rename)
+[![license: MIT](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
+
 pi coding agent 扩展：**根据对话内容给会话重命名，并把名字同步成终端标题**。
 
 - 新会话第一轮对话结束后，自动起一个名字（已有名字的会话不会被覆盖）。
