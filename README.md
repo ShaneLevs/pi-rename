@@ -78,7 +78,7 @@ system:  "You name AI coding-assistant sessions … - Length limit: at most 15 u
 user:    "Name this conversation (5 turns) in <语言>, within 15 units:\n\nUSER: …\nASSISTANT: …\n\nName:"
 ```
 
-参数固定 `maxTokens: 512`、`temperature: 0.2`、`cacheRetention: "none"`（一次性起名调用不去污染提示词缓存，pi 自己的压缩摘要也是这样做的）；`reasoning` 不传 → pi runtime 按 `?? "off"` 处理，即不开思考。模型默认用**当前会话模型**，`/rename model` 可换便宜的。
+参数固定 `maxTokens: 512`、`temperature: 0.2`、`cacheRetention: "none"`（一次性起名调用不去污染提示词缓存，pi 自己的压缩摘要也是这样做的）；`reasoning: "low"` —— **不传等于显式关掉思考**（Anthropic 适配层会发 `thinkingEnabled: false`），而只支持思考的模型会直接拒掉这种请求，所以这里统一要 `low`：不支持思考的模型会被 `clampThinkingLevel` 降级回 `off`，OpenAI 兼容中转则收到 `reasoning_effort: "low"`。按 token 预算结算的适配层会把该等级的思考预算（`low` = 2048）**加在** `maxTokens` 之上，并至少留 1024 token 给正文，所以 512 的上限不会被思考吃掉。模型默认用**当前会话模型**，`/rename model` 可换便宜的。
 
 `maxTokens` 给到 512 而不是 64 的原因：名字本身只有几个 token，但部分 OpenAI 兼容中转**无论是否要求**都会返回 reasoning 内容，这些同样按这个上限结算。实测 64 会被 reasoning 吃光、正文为空，导致名字静默退化成「首条用户消息」；现在这种情况会 notify 一条带 `stopReason` 的 warning。
 
@@ -192,7 +192,7 @@ Both triggers use a 5-turn window (`RECENT_TURNS = 5`):
 
 **Formatting requests are not a topic.** A session once got named "answer in one sentence" because the user's last line said so; the system prompt now explicitly says to ignore instructions about reply format or length and name the content instead.
 
-**The request itself** is one isolated single-turn call: no pi system prompt, no tools, never enters the transcript. Params are fixed at `maxTokens: 512`, `temperature: 0.2`, `cacheRetention: "none"` (a one-off naming call shouldn't pollute prompt caching, same reasoning pi uses for its own compaction summaries); `reasoning` is omitted → the pi runtime treats it as `"off"`.
+**The request itself** is one isolated single-turn call: no pi system prompt, no tools, never enters the transcript. Params are fixed at `maxTokens: 512`, `temperature: 0.2`, `cacheRetention: "none"` (a one-off naming call shouldn't pollute prompt caching, same reasoning pi uses for its own compaction summaries), and `reasoning: "low"` — **omitting it would explicitly turn thinking off** (the Anthropic adapter sends `thinkingEnabled: false`), which reasoning-only models reject outright. `low` degrades safely: models without reasoning support get clamped back to `off`, and OpenAI-compatible relays simply receive `reasoning_effort: "low"`. Budget-based adapters add that level's thinking budget (`low` = 2048) **on top of** `maxTokens` and keep at least 1024 tokens for the answer, so the 512 cap is never eaten by thinking.
 
 `maxTokens` is 512 rather than 64 because some OpenAI-compatible proxies return reasoning content whether asked or not, and it bills against the same cap. At 64 the reasoning ate the whole budget and the body came back empty, so the name silently degraded to "first user message"; that case now raises a warning with the `stopReason`.
 

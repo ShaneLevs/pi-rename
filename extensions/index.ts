@@ -50,6 +50,17 @@ const ENTRY_TYPE = "pi-rename";
  */
 const NAME_MAX_TOKENS = 512;
 
+/**
+ * Thinking level for the naming call. We ask for `low` instead of leaving
+ * `reasoning` undefined: an undefined level makes pi's adapters explicitly
+ * disable thinking (the Anthropic adapter sends `thinkingEnabled: false`), and
+ * reasoning-only models reject that outright. `low` also degrades safely — models
+ * without reasoning support clamp it back to `off`, and non-reasoning relays just
+ * see `reasoning_effort: "low"`. Budget-based adapters add the level's thinking
+ * budget on top of `NAME_MAX_TOKENS` and still keep 1024 tokens for the answer.
+ */
+const NAME_REASONING = "low";
+
 /** Config directory. Override with PI_RENAME_CONFIG_DIR (the tests use a temp dir). */
 function configDir(): string {
 	return process.env.PI_RENAME_CONFIG_DIR || join(homedir(), ".pi", "agent", "pi-rename");
@@ -143,16 +154,15 @@ export default function (pi: ExtensionAPI) {
 		const model = pickModel(ctx);
 		if (!model) return fallbackName(first?.user ?? "");
 		try {
-			// streamSimple is the provider-neutral path for nested calls. `reasoning` is
-			// deliberately omitted: pi's runtime treats a missing value as "off"
-			// (options?.reasoning ?? "off"), and the option type does not accept "off".
+			// streamSimple is the provider-neutral path for nested calls. `reasoning: "low"`
+			// keeps thinking on but cheap — some models refuse a request that turns it off.
 			// cacheRetention: "none" keeps a one-off naming call out of the prompt cache,
 			// matching what pi does for its own compaction summaries.
 			const response = await ctx.modelRegistry
 				.streamSimple(
 					model,
 					{ systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-					{ maxTokens: NAME_MAX_TOKENS, temperature: 0.2, cacheRetention: "none" },
+					{ maxTokens: NAME_MAX_TOKENS, temperature: 0.2, cacheRetention: "none", reasoning: NAME_REASONING },
 				)
 				.result();
 			if (response.stopReason === "error") throw new Error(response.errorMessage ?? "model error");

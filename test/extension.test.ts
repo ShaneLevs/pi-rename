@@ -237,15 +237,16 @@ describe("auto-rename", () => {
 		expect(h.notices.some((n) => n.level === "warning")).toBe(true);
 	});
 
-	test("requests no prompt cache and a roomy output cap", async () => {
+	test("requests no prompt cache, a roomy output cap, and low thinking", async () => {
 		const h = createHarness({ entries: firstExchange() });
 		await h.emit("session_start", { reason: "new" });
 		await h.emit("agent_settled", { aborted: false });
 		await flush();
 		expect(h.calls[0]?.options).toMatchObject({ cacheRetention: "none", temperature: 0.2 });
 		expect(h.calls[0]?.options.maxTokens).toBeGreaterThanOrEqual(256);
-		// reasoning stays undefined so pi's runtime treats the call as thinking-off.
-		expect(h.calls[0]?.options.reasoning).toBeUndefined();
+		// Never leave reasoning undefined: that makes the adapters explicitly turn
+		// thinking off, which reasoning-only models reject.
+		expect(h.calls[0]?.options.reasoning).toBe("low");
 	});
 
 	test("warns and falls back when the model returns only thinking", async () => {
