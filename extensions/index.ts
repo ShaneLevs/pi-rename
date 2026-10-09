@@ -54,6 +54,15 @@ const ENTRY_TYPE = "pi-rename";
  */
 const NAME_REASONING = "low";
 
+/**
+ * Cap every level's token budget at 1024. Some Anthropic-format relays treat
+ * budget_tokens as a thinking-tier switch and reject anything above their
+ * "low" tier with a misleading “不支持关闭思考” 400 (reproduced against a
+ * glm-5.3-flash relay: budget 1024 → 200, 1025+ → 400). Naming never needs
+ * deep thinking, and effort-style providers ignore this field entirely.
+ */
+const NAME_THINKING_BUDGETS = { minimal: 1024, low: 1024, medium: 1024, high: 1024 };
+
 /** Levels accepted by config.json `reasoning` and `/rename reasoning`. */
 const THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
 type NameThinkingLevel = (typeof THINKING_LEVELS)[number];
@@ -158,15 +167,15 @@ export default function (pi: ExtensionAPI) {
 		const model = pickModel(ctx);
 		if (!model) return fallbackName(first?.user ?? "");
 		try {
-			// streamSimple with ONLY the reasoning level set. Everything else stays at
-			// provider defaults: temperature, output cap and cache retention are the
-			// model's own, and the prompt alone shapes the answer. reasoning must be a
-			// real level (never undefined) — see NAME_REASONING above.
+			// streamSimple with ONLY the reasoning level + capped thinking budgets set.
+			// Everything else stays at provider defaults; the prompt alone shapes the
+			// answer. reasoning must be a real level (never undefined) and the budget
+			// must stay ≤ 1024 — see NAME_REASONING / NAME_THINKING_BUDGETS above.
 			const response = await ctx.modelRegistry
 				.streamSimple(
 					model,
 					{ systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-					{ reasoning: config.reasoning },
+					{ reasoning: config.reasoning, thinkingBudgets: NAME_THINKING_BUDGETS },
 				)
 				.result();
 			if (response.stopReason === "error") throw new Error(response.errorMessage ?? "model error");

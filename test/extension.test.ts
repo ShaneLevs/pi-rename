@@ -240,16 +240,24 @@ describe("auto-rename", () => {
 		expect(h.notices.some((n) => n.level === "warning")).toBe(true);
 	});
 
-	test("sends only the reasoning level; every other parameter stays default", async () => {
+	test("sends only the reasoning level and capped thinking budgets", async () => {
 		const h = createHarness({ entries: firstExchange() });
 		await h.emit("session_start", { reason: "new" });
 		await h.emit("agent_settled", { aborted: false });
 		await flush();
-		// The prompt controls the output; the only option is the thinking level.
-		expect(h.calls[0]?.options).toEqual({ reasoning: "low" });
+		// The prompt controls the output; the only options are the thinking level
+		// and per-level budget caps.
+		expect(h.calls[0]?.options).toEqual({
+			reasoning: "low",
+			thinkingBudgets: { minimal: 1024, low: 1024, medium: 1024, high: 1024 },
+		});
 		// It must be a real level: undefined is the disable signal that
 		// thinking-only relays reject with “不支持关闭思考”.
 		expect(h.calls[0]?.options.reasoning).not.toBeUndefined();
+		// Budget-based relays 400 with “不支持关闭思考” above their 1024-token tier.
+		for (const budget of Object.values(h.calls[0]?.options.thinkingBudgets ?? {})) {
+			expect(budget).toBeLessThanOrEqual(1024);
+		}
 	});
 
 	test("warns and falls back when the model returns only thinking", async () => {

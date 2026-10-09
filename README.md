@@ -12,7 +12,7 @@ pi coding agent 扩展：**根据对话内容给会话重命名，并把名字�
 - `/rename model <provider/id>` —— 指定用来起名字的模型（支持 id 子串模糊匹配）。
 - `/rename model show` —— 打印当前实际生效的模型，不改配置。
 - `/rename model list` —— 打印可用模型列表，不弹选择器（print/json 模式下不带参数也是这个）。
-- `/rename reasoning <off|minimal|low|medium|high>` —— 起名调用的思考等级，默认 `low`；不带参数打印当前值。
+- `/rename reasoning <minimal|low|medium|high>` —— 起名调用的思考等级，默认 `low`；不带参数打印当前值。不提供 `off`：不传等级等于显式关闭思考，只支持思考的中转会直接拒绝（旧配置里存的 `off` 会自动矫正为 `low`）。
 - `/rename on` / `/rename off` —— 开启 / 关闭自动重命名。
 
 ---
@@ -45,7 +45,7 @@ pi install npm:pi-rename
 | `/rename model default` | 取消设置，回到「用当前会话模型」 |
 | `/rename model show` | 打印当前实际生效的模型 |
 | `/rename model list` | 打印可用模型列表，不弹选择器 |
-| `/rename reasoning <level>` | 起名的思考等级（off / minimal / low / medium / high） |
+| `/rename reasoning <level>` | 起名的思考等级（minimal / low / medium / high） |
 | `/rename reasoning` | 不带参数：打印当前等级 |
 
 配置在 `~/.pi/agent/pi-rename/config.json`（用 `PI_RENAME_CONFIG_DIR` 可换目录），只有三个字段：
@@ -86,9 +86,9 @@ system:  "You name AI coding-assistant sessions … - Length limit: at most 15 u
 user:    "Name this conversation (5 turns) in <语言>, within 15 units:\n\nUSER: …\nASSISTANT: …\n\nName:"
 ```
 
-参数固定 `maxTokens: 512`、`temperature: 0.2`、`cacheRetention: "none"`（一次性起名调用不去污染提示词缓存，pi 自己的压缩摘要也是这样做的）；`reasoning: "low"` —— **不传等于显式关掉思考**（Anthropic 适配层会发 `thinkingEnabled: false`），而只支持思考的模型会直接拒掉这种请求，所以这里统一要 `low`：不支持思考的模型会被 `clampThinkingLevel` 降级回 `off`，OpenAI 兼容中转则收到 `reasoning_effort: "low"`。按 token 预算结算的适配层会把该等级的思考预算（`low` = 2048）**加在** `maxTokens` 之上，并至少留 1024 token 给正文，所以 512 的上限不会被思考吃掉。模型默认用**当前会话模型**，`/rename model` 可换便宜的。
+命名请求只带**一个模型参数**：`reasoning: <等级>`（默认 `low`），外加把所有等级的思考 token 预算钉在 1024（`thinkingBudgets`）。`temperature`、`maxTokens`、`cacheRetention` 一律不传，走模型默认，输出完全由提示词控制。
 
-`maxTokens` 给到 512 而不是 64 的原因：名字本身只有几个 token，但部分 OpenAI 兼容中转**无论是否要求**都会返回 reasoning 内容，这些同样按这个上限结算。实测 64 会被 reasoning 吃光、正文为空，导致名字静默退化成「首条用户消息」；现在这种情况会 notify 一条带 `stopReason` 的 warning。
+`reasoning` 必须是真实等级、不能省：**不传等于显式关闭思考**（Anthropic 适配层发 `thinking:{type:"disabled"}`，OpenAI 适配层发 `enable_thinking:false`），“始终思考”的中转会直接 400，报“该模型始终思考，不支持关闭思考”。思考预算钉在 1024 是因为部分 Anthropic 格式中转把 `budget_tokens` 当思考档位开关：实测某中转（glm-5.3-flash）对 ≥1025 的预算一律 400（误导性地报同一句“不支持关闭思考”），1024 则正常；而 pi-ai 对 `low` 的默认预算恰好是 2048，不钉住就炸。effort 型 provider（OpenAI 兼容）收到的是 `reasoning_effort`，`thinkingBudgets` 对它们无效也无害。模型默认用**当前会话模型**，`/rename model` 可换便宜的。
 
 **返回后清洗**：剥 ```` ``` ```` 围栏 → 只取第一个非空行 → 去 `-`/`*`/`#`/`>`/引号装饰与 `Title:`/`标题：` 前缀 → 去结尾标点 → 折叠空白 → 按 15 单位截断 → 剥控制字符。清洗后一个实词都不剩（或调用失败）就退化成**窗口里第一条用户消息的第一行**（同样限 15 单位），并 notify 一条 warning。
 
@@ -152,7 +152,7 @@ pi coding agent extension: **names your sessions from the conversation, and mirr
 - `/rename model <provider/id>` — pick the model used for naming (substring / fuzzy id match).
 - `/rename model show` — print the model that is actually in effect, without changing anything.
 - `/rename model list` — print the available models instead of opening a picker (also the no-argument behaviour in print/json mode).
-- `/rename reasoning <off|minimal|low|medium|high>` — thinking level for the naming call, default `low`; no argument prints the current level.
+- `/rename reasoning <minimal|low|medium|high>` — thinking level for the naming call, default `low`; no argument prints the current level. `off` is deliberately not offered: omitting the level is what turns thinking off, which always-thinking relays reject (a stored `off` from older versions is coerced to `low`).
 - `/rename on` / `/rename off` — enable / disable auto-renaming.
 
 ### Install
@@ -181,7 +181,7 @@ Run `/reload` in pi afterwards (auto-discovered on first install). To try it onc
 | `/rename model default` | Clear the override, fall back to the current session model |
 | `/rename model show` | Print the model that is actually in effect |
 | `/rename model list` | Print the available models, no picker |
-| `/rename reasoning <level>` | Thinking level for naming (off / minimal / low / medium / high) |
+| `/rename reasoning <level>` | Thinking level for naming (minimal / low / medium / high) |
 | `/rename reasoning` | No argument: print the current level |
 
 Config lives in `~/.pi/agent/pi-rename/config.json` (override the directory with `PI_RENAME_CONFIG_DIR`), three fields:
@@ -213,9 +213,9 @@ Both triggers use a 5-turn window (`RECENT_TURNS = 5`):
 
 **Formatting requests are not a topic.** A session once got named "answer in one sentence" because the user's last line said so; the system prompt now explicitly says to ignore instructions about reply format or length and name the content instead.
 
-**The request itself** is one isolated single-turn call: no pi system prompt, no tools, never enters the transcript. Params are fixed at `maxTokens: 512`, `temperature: 0.2`, `cacheRetention: "none"` (a one-off naming call shouldn't pollute prompt caching, same reasoning pi uses for its own compaction summaries), and `reasoning: "low"` — **omitting it would explicitly turn thinking off** (the Anthropic adapter sends `thinkingEnabled: false`), which reasoning-only models reject outright. `low` degrades safely: models without reasoning support get clamped back to `off`, and OpenAI-compatible relays simply receive `reasoning_effort: "low"`. Budget-based adapters add that level's thinking budget (`low` = 2048) **on top of** `maxTokens` and keep at least 1024 tokens for the answer, so the 512 cap is never eaten by thinking.
+**The request itself** is one isolated single-turn call carrying exactly **one model parameter**: `reasoning: <level>` (default `low`), plus `thinkingBudgets` pinning every level's token budget to 1024. No `temperature`, no `maxTokens`, no `cacheRetention` — provider defaults apply and the prompt alone shapes the answer.
 
-`maxTokens` is 512 rather than 64 because some OpenAI-compatible proxies return reasoning content whether asked or not, and it bills against the same cap. At 64 the reasoning ate the whole budget and the body came back empty, so the name silently degraded to "first user message"; that case now raises a warning with the `stopReason`.
+`reasoning` must be a real level and can never be omitted: **omitting it is the explicit thinking-disable signal** (the Anthropic adapter sends `thinking:{type:"disabled"}`, OpenAI adapters send `enable_thinking:false`), which always-thinking relays reject with a 400 (e.g. “该模型始终思考，不支持关闭思考”). The 1024 budget cap exists because some Anthropic-format relays treat `budget_tokens` as a thinking-tier switch: one such relay (glm-5.3-flash) was verified to 400 on any budget ≥ 1025 — misleadingly reporting the same “doesn't support disabling thinking” error — while 1024 works; pi-ai's default budget for `low` is 2048, so without the cap the call fails on those gateways. Effort-style providers receive `reasoning_effort` and ignore `thinkingBudgets` entirely.
 
 **Post-processing**: strip ``` fences → take the first non-empty line → drop `-`/`*`/`#`/`>` decoration and `Title:` / `标题：` prefixes → strip trailing punctuation → collapse whitespace → truncate to 15 units → strip control characters. If nothing word-like survives (or the call fails), the name falls back to the **first line of the first user message in the window** (also capped at 15 units) and a warning is shown.
 
