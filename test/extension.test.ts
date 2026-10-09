@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import renameExtension from "../extensions/index.ts";
+import renameExtension, { resetVscodeTitleCheck } from "../extensions/index.ts";
+import { setVscodePathsOverride } from "../extensions/vscode.ts";
 
 interface HarnessOptions {
 	name?: string;
@@ -140,6 +141,8 @@ beforeEach(() => {
 });
 afterEach(() => {
 	delete process.env.PI_RENAME_CONFIG_DIR;
+	setVscodePathsOverride(undefined);
+	resetVscodeTitleCheck();
 	rmSync(dir, { recursive: true, force: true });
 });
 
@@ -405,6 +408,79 @@ describe("/rename model", () => {
 		await h.run("");
 		expect(h.notices.some((n) => n.message.includes("no model matches"))).toBe(true);
 		expect(h.getName()).toBe("回落会话模型");
+	});
+});
+
+describe("VS Code settings patch", () => {
+	test("session_start on Windows patches settings.json when VS Code is present", async () => {
+		const savedPlatform = process.platform;
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			const settingsPath = join(dir, "Code", "User", "settings.json");
+			mkdirSync(join(dir, "Code", "User"), { recursive: true });
+			writeFileSync(settingsPath, JSON.stringify({ "editor.fontSize": 14 }), "utf8");
+			setVscodePathsOverride([settingsPath]);
+			const h = createHarness();
+			await h.emit("session_start", { reason: "new" });
+			const saved = JSON.parse(readFileSync(settingsPath, "utf8"));
+			expect(saved["terminal.integrated.tabs.title"]).toBe("${sequence}");
+			expect(saved["editor.fontSize"]).toBe(14);
+			expect(h.notices.some((n) => n.message.includes("${sequence}"))).toBe(true);
+		} finally {
+			Object.defineProperty(process, "platform", { value: savedPlatform });
+		}
+	});
+
+	test("session_start on Windows without VS Code only reports and does nothing", async () => {
+		const savedPlatform = process.platform;
+		Object.defineProperty(process, "platform", { value: "win32" });
+		try {
+			setVscodePathsOverride([join(dir, "absent", "settings.json")]);
+			const h = createHarness();
+			await h.emit("session_start", { reason: "new" });
+			expect(existsSync(join(dir, "absent"))).toBe(false);
+			expect(h.notices.some((n) => n.message.includes("no VS Code settings.json"))).toBe(true);
+		} finally {
+			Object.defineProperty(process, "platform", { value: savedPlatform });
+		}
+	});
+
+	test("session_start outside Windows leaves settings alone", async () => {
+		const savedPlatform = process.platform;
+		Object.defineProperty(process, "platform", { value: "darwin" });
+		try {
+			setVscodePathsOverride([join(dir, "any", "settings.json")]);
+			const h = createHarness();
+			await h.emit("session_start", { reason: "new" });
+			expect(h.notices).toHaveLength(0);
+		} finally {
+			Object.defineProperty(process, "platform", { value: savedPlatform });
+		}
+	});
+
+	test("/rename vscode runs the check on any platform exactly once", async () => {
+		const savedPlatform = process.platform;
+		Object.defineProperty(process, "platform", { value: "darwin" });
+		try {
+			const settingsPath = join(dir, "Code", "User", "settings.json");
+			mkdirSync(join(dir, "Code", "User"), { recursive: true });
+			writeFileSync(settingsPath, "{}", "utf8");
+			setVscodePathsOverride([settingsPath]);
+			const h = createHarness();
+			await h.run("vscode");
+			expect(JSON.parse(readFileSync(settingsPath, "utf8"))["terminal.integrated.tabs.title"]).toBe("${sequence}");
+			await h.emit("session_start", { reason: "new" });
+			// Only the /rename vscode run notified; the auto check was skipped.
+			expect(h.notices.filter((n) => n.message.includes("terminal.integrated.tabs.title"))).toHaveLength(1);
+		} finally {
+			Object.defineProperty(process, "platform", { value: savedPlatform });
+		}
+	});
+
+	test("/rename <text> still works when the text starts with a subcommand word", async () => {
+		const h = createHarness({ entries: firstExchange() });
+		await h.run("vscode 有点怪");
+		expect(h.getName()).toBe("vscode 有点怪");
 	});
 });
 

@@ -14,6 +14,7 @@ pi coding agent 扩展：**根据对话内容给会话重命名，并把名字�
 - `/rename model list` —— 打印可用模型列表，不弹选择器（print/json 模式下不带参数也是这个）。
 - `/rename reasoning <minimal|low|medium|high>` —— 起名调用的思考等级，默认 `low`；不带参数打印当前值。不提供 `off`：不传等级等于显式关闭思考，只支持思考的中转会直接拒绝（旧配置里存的 `off` 会自动矫正为 `low`）。
 - `/rename on` / `/rename off` —— 开启 / 关闭自动重命名。
+- `/rename vscode` —— 手动重跑一次 VS Code 标签标题设置检查（见下文）。
 
 ---
 
@@ -47,6 +48,7 @@ pi install npm:pi-rename
 | `/rename model list` | 打印可用模型列表，不弹选择器 |
 | `/rename reasoning <level>` | 起名的思考等级（minimal / low / medium / high） |
 | `/rename reasoning` | 不带参数：打印当前等级 |
+| `/rename vscode` | 手动重跑 VS Code 标签标题设置检查（详见下文「终端标题」） |
 
 配置在 `~/.pi/agent/pi-rename/config.json`（用 `PI_RENAME_CONFIG_DIR` 可换目录），只有三个字段：
 
@@ -108,6 +110,15 @@ pi 发的标题序列本身不分平台：`ctx.ui.setTitle()` 在 Windows 上同
 
 这个设置在 Windows 上尤其必要：Windows 终端的默认标签模板**不会**跟随 OSC 序列刷新标签（macOS/Linux 上多数默认模板会）。改完重开一个终端标签生效。
 
+**插件会替你改**：从 v1.2.0 起，pi 在 Windows 上启动会话时自动检查用户级 `settings.json`（存在即认为装了 VS Code；按 `%APPDATA%\Code\User\settings.json` → Insiders → VSCodium 的顺序找），只要 `terminal.integrated.tabs.title` 还不是 `${sequence}`，就直接写进去，文件里其它设置原样保留。也就是说这一节的手工步骤通常不用做了：
+
+- 没装 VS Code（找不到任何 settings.json）→ 什么都不写，只在 pi 里提示一句；
+- settings.json 带 JSONC 注释/尾逗号 → 照常解析，改完回写成 VS Code 自己的制表符缩进风格；
+- 文件解析失败（手写坏了）→ 不碰它，报一条 warning 让你自己修；
+- 已经是 `${sequence}` → 跳过，不重写文件；
+- 非 Windows 平台默认不动你的配置（那边的默认模板本来就跟随 OSC），想改随时 `/rename vscode` 手动触发一次；
+- 想跳过这个行为 → 在 settings.json 里预先写好 `${sequence}`，或在 VS Code 设置里关掉后插件只会提示「已是目标值」而不再写入。
+
 再核对三层排查顺序：
 
 1. **窗口标题变了，标签没变** → 上面的 `${sequence}` 模板，改完一定生效。
@@ -136,7 +147,7 @@ pi-rename/
 ```
 
 ```bash
-npm run check    # tsc + tsc(test) + bun test（58 个用例）
+npm run check    # tsc + tsc(test) + bun test（79 个用例）
 pi -e ./extensions/index.ts
 ```
 
@@ -154,6 +165,7 @@ pi coding agent extension: **names your sessions from the conversation, and mirr
 - `/rename model list` — print the available models instead of opening a picker (also the no-argument behaviour in print/json mode).
 - `/rename reasoning <minimal|low|medium|high>` — thinking level for the naming call, default `low`; no argument prints the current level. `off` is deliberately not offered: omitting the level is what turns thinking off, which always-thinking relays reject (a stored `off` from older versions is coerced to `low`).
 - `/rename on` / `/rename off` — enable / disable auto-renaming.
+- `/rename vscode` — manually re-run the VS Code tab-title settings check (see below).
 
 ### Install
 
@@ -181,8 +193,9 @@ Run `/reload` in pi afterwards (auto-discovered on first install). To try it onc
 | `/rename model default` | Clear the override, fall back to the current session model |
 | `/rename model show` | Print the model that is actually in effect |
 | `/rename model list` | Print the available models, no picker |
-| `/rename reasoning <level>` | Thinking level for naming (minimal / low / medium / high) |
-| `/rename reasoning` | No argument: print the current level |
+| `/rename reasoning <level>` | 起名的思考等级（minimal / low / medium / high） |
+| `/rename reasoning` | 不带参数：打印当前等级 |
+| `/rename vscode` | 手动重跑 VS Code 标签标题设置检查（详见下文「终端标题」） |
 
 Config lives in `~/.pi/agent/pi-rename/config.json` (override the directory with `PI_RENAME_CONFIG_DIR`), three fields:
 
@@ -235,6 +248,15 @@ The title sequence itself is platform-independent: `ctx.ui.setTitle()` writes `O
 
 This setting matters most on Windows: the default tab template on Windows terminals does **not** follow OSC sequences (on macOS/Linux most default templates do). Reopen a terminal tab after changing it.
 
+**The extension does this for you.** Since v1.2.0, when a session starts on Windows, pi-rename checks the user-level `settings.json` (its existence means VS Code is installed; probed in the order `%APPDATA%\Code\User\settings.json` → Insiders → VSCodium) and, if `terminal.integrated.tabs.title` is not `${sequence}` yet, writes it directly — every other setting is preserved. The manual step above is normally no longer needed:
+
+- No VS Code (no settings.json anywhere) → nothing is written; pi shows one info notice;
+- JSONC comments / trailing commas in settings.json → parsed fine; the file is rewritten in VS Code's own tab-indented style;
+- Unparseable file (hand-broken) → left untouched, with a warning asking you to fix it;
+- Already `${sequence}` → skipped, no rewrite;
+- On non-Windows platforms the settings are not touched by default (their default templates already follow OSC); run `/rename vscode` to trigger the check manually on any platform;
+- To opt out, pre-set `${sequence}` yourself — the extension then only reports "already set" and never writes.
+
 Then triage in this order:
 
 1. **Window title changed, tab label didn't** → the `${sequence}` template above; it will work after the change.
@@ -253,7 +275,7 @@ Then triage in this order:
 ### Development
 
 ```bash
-npm run check    # tsc + tsc(test) + bun test (58 cases)
+npm run check    # tsc + tsc(test) + bun test (79 cases)
 pi -e ./extensions/index.ts
 ```
 

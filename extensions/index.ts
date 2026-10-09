@@ -11,6 +11,11 @@
  *      overwriting any previous name. `/rename <text>` uses that text as the
  *      name. `/rename on|off` toggles behaviour 1. `/rename model <provider/id>`
  *      picks the model used for naming (empty = the session's own model).
+ *      `/rename vscode` re-runs the VS Code settings check on demand.
+ *   3. VS Code tab title — at session start on Windows (or via `/rename vscode`
+ *      anywhere), if a user-level settings.json exists (VS Code is installed),
+ *      `terminal.integrated.tabs.title` is set to "${sequence}" so the tab
+ *      label follows the shell-reported title that pi's setTitle emits.
  *
  * After every rename the session name is also pushed to the terminal title with
  * `ctx.ui.setTitle()`, which emits an OSC title sequence, so a VS Code terminal
@@ -40,6 +45,7 @@ import {
 	type EntryLike,
 	type Turn,
 } from "./naming.ts";
+import { ensureSequenceTitle } from "./vscode.ts";
 
 const ENTRY_TYPE = "pi-rename";
 
@@ -125,6 +131,30 @@ function saveConfig(config: RenameConfig): void {
 	} catch {
 		// Config persistence is best effort; naming still works for this run.
 	}
+}
+
+/** Set once the VS Code settings.json patch has run for this process. */
+let vscodeChecked = false;
+
+/** Test seam: reset the once-per-process guard between harnesses. */
+export function resetVscodeTitleCheck(): void {
+	vscodeChecked = false;
+}
+
+/**
+ * Make the VS Code terminal tab follow shell-reported titles. Runs at most
+ * once per process; on Windows the default tab template ignores OSC
+ * sequences, so the user-level settings.json needs
+ * `"terminal.integrated.tabs.title": "${sequence}"` — patched automatically
+ * when VS Code is installed (settings.json exists) and readable. Other
+ * platforms keep their defaults unless /rename vscode is run by hand.
+ */
+function syncVscodeTitle(ctx: ExtensionContext, force = false): void {
+	if (vscodeChecked && !force) return;
+	vscodeChecked = true;
+	if (process.platform !== "win32" && !force) return;
+	const result = ensureSequenceTitle();
+	ctx.ui.notify(result.message, result.status === "failed" ? "warning" : "info");
 }
 
 export default function (pi: ExtensionAPI) {
@@ -239,7 +269,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerCommand("rename", {
 		description:
-			"Rename this session from the conversation (/rename [name|on|off|model|reasoning <args>])",
+			"Rename this session from the conversation (/rename [name|on|off|model|reasoning|vscode <args>])",
 		handler: async (args, ctx) => {
 			const trimmed = args.trim();
 			const [sub, ...rest] = trimmed.split(/\s+/);
@@ -351,6 +381,14 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			// /rename vscode — (re)run the VS Code tab-title settings check on
+			// any platform, and report what happened. Exact match only, so a
+			// literal name that merely starts with "vscode" still works.
+			if (trimmed === "vscode") {
+				syncVscodeTitle(ctx, true);
+				return;
+			}
+
 			// /rename <text> — use the text as the name.
 			const literal = sanitizeLiteralName(trimmed);
 			if (!literal) {
@@ -372,6 +410,9 @@ export default function (pi: ExtensionAPI) {
 			.some((entry) => entry.type === "custom" && entry.customType === ENTRY_TYPE);
 		// A resumed session keeps its name; make sure the tab reflects it.
 		applyTitle(ctx);
+		// Windows tab labels do not follow OSC sequences by default; patch the
+		// VS Code user settings once per process when they exist (best effort).
+		syncVscodeTitle(ctx);
 	});
 
 	pi.on("session_info_changed", async (_event, ctx) => {
