@@ -30,7 +30,6 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import type { ThinkingLevel } from "@earendil-works/pi-ai";
 import {
 	buildNameRequest,
 	collectTurns,
@@ -45,25 +44,19 @@ import {
 const ENTRY_TYPE = "pi-rename";
 
 /**
- * Output cap for the naming call. A name is a handful of tokens, but providers
- * that emit reasoning content anyway (some OpenAI-compatible relays) bill that
- * against this cap too, so 64 was too tight and left no text at all.
+ * Thinking level sent with the naming call — the ONLY model parameter set.
+ * It cannot be omitted: on qwen-style relays the reasoning option IS the
+ * thinking switch, and omitting it sends enable_thinking:false, which
+ * thinking-only relays reject with “不支持关闭思考”. So the level is always a
+ * real one (never off/undefined) and everything else — temperature, output
+ * cap, cache retention — is left at provider defaults; the prompt alone
+ * controls what the answer looks like.
  */
-const NAME_MAX_TOKENS = 512;
 const NAME_REASONING = "low";
 
 /** Levels accepted by config.json `reasoning` and `/rename reasoning`. */
-const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high"] as const;
+const THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
 type NameThinkingLevel = (typeof THINKING_LEVELS)[number];
-
-/**
- * `off` is a valid stored level (it means "try to disable thinking" for models
- * that support it) but streamSimple's option type only accepts real thinking
- * levels — undefined is what the adapters turn into thinkingEnabled: false.
- */
-function toStreamReasoning(level: NameThinkingLevel): ThinkingLevel | undefined {
-	return level === "off" ? undefined : level;
-}
 
 /** Config directory. Override with PI_RENAME_CONFIG_DIR (the tests use a temp dir). */
 function configDir(): string {
@@ -106,7 +99,8 @@ function loadConfig(): RenameConfig {
 		// `autoName` was the original key; keep reading it so an old file survives.
 		auto: readBoolean(stored.auto ?? stored.autoName, DEFAULTS.auto),
 		model: typeof stored.model === "string" ? stored.model : DEFAULTS.model,
-		// Unknown levels fall back to the default instead of failing the request.
+		// "off" was accepted by 1.1.x but it is the disable signal that thinking-only
+		// relays reject, so stored "off" (and anything unknown) coerces to the default.
 		reasoning: THINKING_LEVELS.includes(stored.reasoning as NameThinkingLevel)
 			? (stored.reasoning as NameThinkingLevel)
 			: DEFAULTS.reasoning,
@@ -164,15 +158,15 @@ export default function (pi: ExtensionAPI) {
 		const model = pickModel(ctx);
 		if (!model) return fallbackName(first?.user ?? "");
 		try {
-			// streamSimple is the provider-neutral path for nested calls. `reasoning: "low"`
-			// keeps thinking on but cheap — some models refuse a request that turns it off.
-			// cacheRetention: "none" keeps a one-off naming call out of the prompt cache,
-			// matching what pi does for its own compaction summaries.
+			// streamSimple with ONLY the reasoning level set. Everything else stays at
+			// provider defaults: temperature, output cap and cache retention are the
+			// model's own, and the prompt alone shapes the answer. reasoning must be a
+			// real level (never undefined) — see NAME_REASONING above.
 			const response = await ctx.modelRegistry
 				.streamSimple(
 					model,
 					{ systemPrompt, messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
-					{ maxTokens: NAME_MAX_TOKENS, temperature: 0.2, cacheRetention: "none", reasoning: toStreamReasoning(config.reasoning) },
+					{ reasoning: config.reasoning },
 				)
 				.result();
 			if (response.stopReason === "error") throw new Error(response.errorMessage ?? "model error");
@@ -323,18 +317,23 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// /rename reasoning [level] — thinking level for the naming call.
+			// /rename reasoning [level] — thinking level for the naming call. "off" is
+			// deliberately not offered: omitting the level is what turns thinking off,
+			// and thinking-only relays reject that outright.
 			if (keyword === "reasoning" || keyword === "thinking") {
 				const level = rest.join(" ").trim().toLowerCase();
 				if (!level) {
 					ctx.ui.notify(
-						`pi-rename: reasoning is “${config.reasoning}” (off | minimal | low | medium | high)`,
+						`pi-rename: reasoning is “${config.reasoning}” (minimal | low | medium | high)`,
 						"info",
 					);
 					return;
 				}
 				if (!THINKING_LEVELS.includes(level as NameThinkingLevel)) {
-					ctx.ui.notify(`pi-rename: unknown reasoning “${level}” (off | minimal | low | medium | high)`, "warning");
+					ctx.ui.notify(
+						`pi-rename: unknown reasoning “${level}” (minimal | low | medium | high; "off" would send the disable signal thinking-only models reject)`,
+						"warning",
+					);
 					return;
 				}
 				config.reasoning = level as NameThinkingLevel;

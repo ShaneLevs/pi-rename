@@ -240,16 +240,16 @@ describe("auto-rename", () => {
 		expect(h.notices.some((n) => n.level === "warning")).toBe(true);
 	});
 
-	test("requests no prompt cache, a roomy output cap, and low thinking", async () => {
+	test("sends only the reasoning level; every other parameter stays default", async () => {
 		const h = createHarness({ entries: firstExchange() });
 		await h.emit("session_start", { reason: "new" });
 		await h.emit("agent_settled", { aborted: false });
 		await flush();
-		expect(h.calls[0]?.options).toMatchObject({ cacheRetention: "none", temperature: 0.2 });
-		expect(h.calls[0]?.options.maxTokens).toBeGreaterThanOrEqual(256);
-		// Never leave reasoning undefined: that makes the adapters explicitly turn
-		// thinking off, which reasoning-only models reject.
-		expect(h.calls[0]?.options.reasoning).toBe("low");
+		// The prompt controls the output; the only option is the thinking level.
+		expect(h.calls[0]?.options).toEqual({ reasoning: "low" });
+		// It must be a real level: undefined is the disable signal that
+		// thinking-only relays reject with “不支持关闭思考”.
+		expect(h.calls[0]?.options.reasoning).not.toBeUndefined();
 	});
 
 	test("warns and falls back when the model returns only thinking", async () => {

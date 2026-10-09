@@ -1,6 +1,6 @@
 {
   "name": "pi-rename",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Pi coding agent extension — auto-name a new session after the first turn, /rename from the last 5 turns, and mirror the session name into the terminal tab title (VS Code pwsh / Git Bash)",
   "license": "MIT",
   "author": "shanelevs",
