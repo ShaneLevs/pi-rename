@@ -1,0 +1,57 @@
+{
+  "name": "pi-rename",
+  "version": "1.0.0",
+  "description": "Pi coding agent extension — auto-name a new session after the first turn, /rename from the last 5 turns, and mirror the session name into the terminal tab title (VS Code pwsh / Git Bash)",
+  "license": "MIT",
+  "author": "shanelevs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ShaneLevs/pi-rename.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ShaneLevs/pi-rename/issues"
+  },
+  "homepage": "https://github.com/ShaneLevs/pi-rename#readme",
+  "type": "module",
+  "files": [
+    "extensions",
+    "README.md"
+  ],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "extension",
+    "session",
+    "session-name",
+    "naming",
+    "rename",
+    "title",
+    "terminal",
+    "terminal-title",
+    "vscode"
+  ],
+  "main": "extensions/index.ts",
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit",
+    "test": "bun test",
+    "check": "npm run build && npm run typecheck && bun test",
+    "prepublishOnly": "npm run check",
+    "publish:beta": "npm publish --tag beta"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@types/bun": "^1.4.2",
+    "typescript": "^5.8.3"
+  }
+}
